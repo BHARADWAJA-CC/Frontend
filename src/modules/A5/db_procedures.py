@@ -1,6 +1,7 @@
 import os
 import mysql.connector
 from mysql.connector import pooling
+from datetime import datetime, timedelta
 
 # ================== CONFIG ==================
 # You can later move this to config.py
@@ -67,31 +68,20 @@ def create_core_tables(cursor):
     """
     Creates core tables for the clinic system.
     """
+# ---------------- PATIENT ----------------
+def insert_patient(db, data):
+    count = db.patients.count_documents({})
+    if "PatientID" not in data:
+        data["PatientID"] = f"P{101 + count}"
+    db.patients.insert_one(data)
 
-    # Patients Table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS Patients (
-            patient_id INT AUTO_INCREMENT PRIMARY KEY,
-            first_name VARCHAR(100) NOT NULL,
-            last_name VARCHAR(100) NOT NULL,
-            date_of_birth DATE NOT NULL,
-            gender ENUM('Male', 'Female', 'Other') NOT NULL,
-            contact_number VARCHAR(20),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
 
-    # Vaccines Table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS Vaccines (
-            vaccine_id INT AUTO_INCREMENT PRIMARY KEY,
-            vaccine_name VARCHAR(100) NOT NULL UNIQUE,
-            manufacturer VARCHAR(100) NOT NULL,
-            recommended_doses INT DEFAULT 1,
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
+# ---------------- VACCINE ----------------
+def insert_vaccine(db, data):
+    count = db.vaccines.count_documents({})
+    if "VaccineID" not in data:
+        data["VaccineID"] = f"V{101 + count}"
+    db.vaccines.insert_one(data)
 
     # Immunizations Table
     cursor.execute("""
