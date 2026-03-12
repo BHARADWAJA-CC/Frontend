@@ -1,89 +1,32 @@
-import os
-import mysql.connector
-from mysql.connector import pooling
-from datetime import datetime, timedelta
-
-# ================== CONFIG ==================
-# You can later move this to config.py
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "your_password",
-    "database": "clinic_db"
-}
-
-# ================== CONNECTION POOL ==================
-
-class DatabaseConnectionPool:
-    """
-    Singleton wrapper class for managing a MySQL Connection Pool.
-    """
-    _instance = None
-    _pool = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(DatabaseConnectionPool, cls).__new__(cls)
-            cls._instance._initialize_pool()
-        return cls._instance
-
-    def _initialize_pool(self):
-        pool_name = "clinic_app_pool"
-        pool_size = int(os.environ.get("DB_POOL_SIZE", 5))
-
-        try:
-            print(f"Initializing DB Connection Pool (Size: {pool_size})...")
-            self._pool = pooling.MySQLConnectionPool(
-                pool_name=pool_name,
-                pool_size=pool_size,
-                pool_reset_session=True,
-                **DB_CONFIG
-            )
-            print("✅ Database Connection Pool initialized.")
-        except mysql.connector.Error as err:
-            print(f"🛑 Failed to create connection pool: {err}")
-            raise
-
-    def get_connection(self):
-        try:
-            return self._pool.get_connection()
-        except mysql.connector.PoolError as err:
-            print(f"⚠️ Pool exhausted: {err}")
-            return None
-        except mysql.connector.Error as err:
-            print(f"⚠️ Database error: {err}")
-            return None
-
-
-# Global instance
-db_pool = DatabaseConnectionPool()
-
-def get_db_connection():
-    return db_pool.get_connection()
-
-
-# ================== SCHEMA CREATION ==================
+# ================== 1. SCHEMA CREATION (March 3) ==================
 
 def create_core_tables(cursor):
     """
-    Creates core tables for the clinic system.
+    Executes raw SQL to create the core tables. 
+    The execution is managed externally by db_connection or flask_app.
     """
-# ---------------- PATIENT ----------------
-def insert_patient(db, data):
-    count = db.patients.count_documents({})
-    if "PatientID" not in data:
-        data["PatientID"] = f"P{101 + count}"
-    db.patients.insert_one(data)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS Patients (
+            patient_id INT AUTO_INCREMENT PRIMARY KEY,
+            first_name VARCHAR(100) NOT NULL,
+            last_name VARCHAR(100) NOT NULL,
+            date_of_birth DATE NOT NULL,
+            gender ENUM('Male', 'Female', 'Other') NOT NULL,
+            contact_number VARCHAR(20),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS Vaccines (
+            vaccine_id INT AUTO_INCREMENT PRIMARY KEY,
+            vaccine_name VARCHAR(100) NOT NULL UNIQUE,
+            manufacturer VARCHAR(100) NOT NULL,
+            recommended_doses INT DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
-# ---------------- VACCINE ----------------
-def insert_vaccine(db, data):
-    count = db.vaccines.count_documents({})
-    if "VaccineID" not in data:
-        data["VaccineID"] = f"V{101 + count}"
-    db.vaccines.insert_one(data)
-
-    # Immunizations Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Immunizations (
             record_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -97,38 +40,46 @@ def insert_vaccine(db, data):
         );
     """)
 
-    print("✅ Core schema initialized.")
+# ================== 2. STORED PROCEDURES (March 8) ==================
 
-
-def initialize_schema():
+def setup_stored_procedures(cursor):
     """
-    Uses connection pool to initialize schema.
+    Deploys the Stored Procedures to the MySQL database.
     """
-    conn = None
-    cursor = None
+    
+    # --- Register Patient Procedure ---
+    cursor.execute("DROP PROCEDURE IF EXISTS RegisterPatient;")
+    cursor.execute("""
+        CREATE PROCEDURE RegisterPatient(
+            IN p_first_name VARCHAR(100),
+            IN p_last_name VARCHAR(100),
+            IN p_dob DATE,
+            IN p_gender VARCHAR(10),
+            IN p_contact VARCHAR(20),
+            OUT p_new_patient_id INT
+        )
+        BEGIN
+            INSERT INTO Patients (first_name, last_name, date_of_birth, gender, contact_number)
+            VALUES (p_first_name, p_last_name, p_dob, p_gender, p_contact);
+            
+            -- Capture the auto-incremented ID to return to Flask
+            SET p_new_patient_id = LAST_INSERT_ID();
+        END;
+    """)
 
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            raise Exception("No DB connection available")
-
-        cursor = conn.cursor()
-
-        create_core_tables(cursor)
-        conn.commit()
-
-    except mysql.connector.Error as err:
-        print(f"❌ Schema Error: {err}")
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()  # returns connection to pool
-
-
-# ================== ENTRY POINT ==================
-
-if __name__ == "__main__":
-    print("🚀 Running initial database setup...")
-    initialize_schema()
+    # --- Register Vaccine Procedure ---
+    cursor.execute("DROP PROCEDURE IF EXISTS RegisterVaccine;")
+    cursor.execute("""
+        CREATE PROCEDURE RegisterVaccine(
+            IN p_vaccine_name VARCHAR(100),
+            IN p_manufacturer VARCHAR(100),
+            IN p_doses INT,
+            OUT p_new_vaccine_id INT
+        )
+        BEGIN
+            INSERT INTO Vaccines (vaccine_name, manufacturer, recommended_doses)
+            VALUES (p_vaccine_name, p_manufacturer, p_doses);
+            
+            SET p_new_vaccine_id = LAST_INSERT_ID();
+        END;
+    """)
