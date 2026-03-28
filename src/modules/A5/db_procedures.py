@@ -14,3 +14,9 @@ def insert_vaccine(db, data):
     if "VaccineID" not in data:
         data["VaccineID"] = f"V{101 + count}"
     db.vaccines.insert_one(data)
+
+
+# ---------------- ADVERSE REACTION ----------------
+def insert_adverse_reaction(db, data):
+    # Ensure ID generation or use provided ID
+    db.adverse_reactions.insert_one(data)
