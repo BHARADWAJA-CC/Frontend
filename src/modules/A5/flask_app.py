@@ -93,3 +93,40 @@ def add_immunization():
 
 if __name__ == '__main__':
     app.run(port=5005, debug=True)
+
+# ---------------- ALLERGY (March 20) ----------------
+@app.route('/api/allergies', methods=['GET'])
+def get_allergies():
+    """Fetch all allergies from the database."""
+    try:
+        return jsonify(list(db.allergies.find({}, {"_id": 0})))
+    except Exception as e:
+        return jsonify({"error": f"Failed to fetch allergies: {str(e)}"}), 500
+
+
+@app.route('/api/allergies', methods=['POST'])
+def add_allergy():
+    try:
+        insert_allergy(db, request.json)
+        return jsonify({"message": "Added"})
+    except Exception as e:
+        return jsonify({"error": f"Database insertion failed: {str(e)}"}), 500
+
+
+# ---------------- CONTRAINDICATION (March 20) ----------------
+@app.route('/api/contraindications', methods=['GET'])
+def get_contraindications():
+    """Fetch all contraindications from the database."""
+    try:
+        return jsonify(list(db.contraindications.find({}, {"_id": 0})))
+    except Exception as e:
+        return jsonify({"error": f"Failed to fetch contraindications: {str(e)}"}), 500
+
+
+@app.route('/api/contraindications', methods=['POST'])
+def add_contra():
+    try:
+        insert_contraindication(db, request.json)
+        return jsonify({"message": "Added", "ContraindicationID": request.json.get("ContraindicationID")})
+    except Exception as e:
+        return jsonify({"error": f"Database insertion failed: {str(e)}"}), 500
