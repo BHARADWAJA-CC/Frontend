@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import home  
+import dashboard  # [2026-04-12] Hooked up dashboard integration
 
 # Define backend connection constant
 FLASK_API_URL = "http://127.0.0.1:5005/api"
@@ -46,6 +47,18 @@ def apply_standard_custom_css():
         </style>
     """, unsafe_allow_html=True)
 
+def global_error_boundary(func):
+    """[2026-04-12] Decorator to catch and handle unhandled exceptions gracefully."""
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            st.error("🚨 **Critical Application Error**")
+            st.markdown(f"An unexpected Python exception caused the UI to crash. See exception details:\n\n`{str(e)}`")
+            st.warning("💡 **Tip:** Verify that the Flask API is running on localhost port 5005.")
+    return wrapper
+
+@global_error_boundary
 def main():
     # Setup state and UI layout rules
     initialize_session_state()
@@ -73,11 +86,11 @@ def main():
         home.render_home_page()
         
     elif page == "Analytics Dashboard":
-        st.title("📊 System Dashboard")
-        st.info("Interactive dashboard visualizations are currently being integrated by Dipesh.")
+        # Launching the integrated dashboard with error boundaries
+        dashboard.show()
         
     elif page == "Patient Management":
-        st.title("🧑‍⚕️ Patient Management")
+        st.title("🧑⚕️ Patient Management")
         st.markdown("Register a new patient into the clinic system.")
         
         # --- Standardized Patient Form ---
@@ -126,13 +139,12 @@ def main():
                                 st.error(f"❌ Failed to register patient: {response.json().get('error', 'Unknown Error')}")
                                 
                     except requests.exceptions.ConnectionError:
-                        st.error("🚨 Critical Error: Could not connect to the Flask API. Ensure the backend is running on port 5005.")
+                        st.error("🚨 Connection Refused: Could not communicate with the Flask API backend.")
 
     elif page == "Vaccines & Immunization":
         st.title("💉 Vaccines & Immunization")
         st.markdown("Log immunizations and manage clinical vaccine inventory.")
-        # We can implement the standardized form for vaccines here later
-        st.info("Vaccine tracking UI is mapped to backend but pending final UI styling.")
+        st.info("Vaccine tracking UI is mapped to backend but pending final UI layout.")
 
 if __name__ == "__main__":
     main()
