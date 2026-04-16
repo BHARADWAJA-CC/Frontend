@@ -7,6 +7,7 @@ def insert_patient(db, data):
         data["PatientID"] = f"P{101 + count}"
     db.patients.insert_one(data)
 
+
 # ---------------- VACCINE ----------------
 def insert_vaccine(db, data):
     count = db.vaccines.count_documents({})
@@ -14,119 +15,82 @@ def insert_vaccine(db, data):
         data["VaccineID"] = f"V{101 + count}"
     db.vaccines.insert_one(data)
 
-# ---------------- ALLERGY (Added Mar 20) ----------------
+
+# ---------------- ALLERGY ----------------
 def insert_allergy(db, data):
-    # [2026-04-11 Bharadwaj] Simulated Foreign Key Constraint
-    patient_id = str(data.get("PatientID", "")).strip()
-    if not db.patients.find_one({"PatientID": patient_id}):
-        raise ValueError(f"Foreign key constraint failed: PatientID '{patient_id}' does not exist.")
-        
-    data["PatientID"] = patient_id
+    count = db.allergies.count_documents({})
+    if "AllergyID" not in data:
+        data["AllergyID"] = f"A{101 + count}"
+    data["DiagnosisDate"] = datetime.now().strftime("%Y-%m-%d")
     db.allergies.insert_one(data)
 
-# ---------------- CONTRAINDICATION (Added Mar 20)----------------
+
+# ---------------- CONTRAINDICATION ----------------
 def insert_contraindication(db, data):
-    # [2026-04-11 Bharadwaj] Simulated Foreign Key Constraint
-    patient_id = str(data.get("PatientID", "")).strip()
-    vaccine_id = str(data.get("VaccineID", "")).strip()
-    
-    if not db.patients.find_one({"PatientID": patient_id}):
-        raise ValueError(f"Foreign key constraint failed: PatientID '{patient_id}' does not exist.")
-    if not db.vaccines.find_one({"VaccineID": vaccine_id}):
-        raise ValueError(f"Foreign key constraint failed: VaccineID '{vaccine_id}' does not exist.")
-    
     count = db.contraindications.count_documents({})
     if "ContraindicationID" not in data:
         data["ContraindicationID"] = f"C{101 + count}"
-        
-    data["PatientID"] = patient_id
-    data["VaccineID"] = vaccine_id
     db.contraindications.insert_one(data)
 
+
+# ---------------- CORE LOGIC ----------------
 def check_contraindication(db, patient_id, vaccine_id):
-    # Fixed parameter binding issues here to ensure clean lookups
-    patient_id = str(patient_id).strip()
-    vaccine_id = str(vaccine_id).strip()
-    
-    contra = db.contraindications.find_one({
-        "PatientID": patient_id, 
-        "VaccineID": vaccine_id
-    })
-    
-    if contra:
-        return {"blocked": True, "reason": contra.get("Reason", "Unknown Reason")}
+    allergies = list(db.allergies.find({"PatientID": patient_id}, {"_id": 0}))
+    contraindications = list(db.contraindications.find({"VaccineID": vaccine_id}, {"_id": 0}))
+
+    for allergy in allergies:
+        for contra in contraindications:
+            if allergy["AllergyType"] == contra["AllergyType"]:
+                return {
+                    "blocked": True,
+                    "reason": f"{allergy['AllergyType']} allergy conflict",
+                    "details": contra
+                }
+
     return {"blocked": False}
 
-# ---------------- IMMUNIZATION (Added Mar 23) ----------------
+
+# ---------------- IMMUNIZATION ----------------
 def insert_immunization(db, data):
-    # [2026-04-11 Bharadwaj] Simulated Foreign Key Constraint
-    patient_id = str(data.get("PatientID", "")).strip()
-    vaccine_id = str(data.get("VaccineID", "")).strip()
+    vaccine = db.vaccines.find_one({"VaccineID": data["VaccineID"]})
     
-    if not db.patients.find_one({"PatientID": patient_id}):
-        raise ValueError(f"Foreign key constraint failed: PatientID '{patient_id}' does not exist.")
-    if not db.vaccines.find_one({"VaccineID": vaccine_id}):
-        raise ValueError(f"Foreign key constraint failed: VaccineID '{vaccine_id}' does not exist.")
-        
-    data["PatientID"] = patient_id
-    data["VaccineID"] = vaccine_id
+    # Calculate dose number
+    patient_doses = list(db.immunizations.find({"PatientID": data["PatientID"], "VaccineID": data["VaccineID"]}))
+    dose_number = len(patient_doses) + 1
+    
+    data["DoseNumber"] = dose_number
+    # Basic generated ID
+    data["ImmunizationID"] = f"{data['VaccineID']}_{data['PatientID']}_{dose_number}"
+
+    next_date = None
+    if vaccine:
+        next_date = datetime.now() + timedelta(days=30 * vaccine["IntervalMonths"])
+
+    data["NextDueDate"] = next_date.strftime("%Y-%m-%d") if next_date else None
+    data["AdministrationDate"] = datetime.now().strftime("%Y-%m-%d")
+
     db.immunizations.insert_one(data)
 
-# ---------------- ADVERSE REACTION (Added Mar 28) ----------------
+# ---------------- ADVERSE REACTION ----------------
 def insert_adverse_reaction(db, data):
-    # [2026-04-11 Bharadwaj] Simulated Foreign Key Constraint
-    patient_id = str(data.get("PatientID", "")).strip()
-    if not db.patients.find_one({"PatientID": patient_id}):
-        raise ValueError(f"Foreign key constraint failed: PatientID '{patient_id}' does not exist.")
-        
-    data["PatientID"] = patient_id
+    # Ensure ID generation or use provided ID
     db.adverse_reactions.insert_one(data)
 
-# =====================================================================
-# ⭐ SHOWCASE & DASHBOARD OPTIMIZATIONS (April 6 Commit)
-# =====================================================================
-
-def get_vaccination_stats(db):
-    pipeline = [
-        {
-            "$lookup": {
-                "from": "immunizations",
-                "localField": "VaccineID",
-                "foreignField": "VaccineID",
-                "as": "doses"
-            }
-        },
-        {
-            "$project": {
-                "VaccineID": 1,
-                "VaccineName": "$Name",  
-                "TotalAdministered": { "$size": "$doses" }
-            }
-        },
-        { "$sort": { "TotalAdministered": -1 } }
-    ]
-    return list(db.vaccines.aggregate(pipeline))
-
-def get_patient_reaction_history(db, patient_id):
-    pipeline = [
-        { "$match": { "PatientID": patient_id } },
-        {
-            "$lookup": {
-                "from": "adverse_reactions",
-                "localField": "PatientID",
-                "foreignField": "PatientID",
-                "as": "reactions"
-            }
-        }
-    ]
-    return list(db.patients.aggregate(pipeline))
-
+# ---------------- DASHBOARD AGGREGATION ----------------
 def get_patient_dashboard_data(db, patient_id):
-    patient_id = str(patient_id).strip()
     patient = db.patients.find_one({"PatientID": patient_id}, {"_id": 0})
-    if not patient: return None
-    
-    patient["immunizations"] = list(db.immunizations.find({"PatientID": patient_id}, {"_id": 0}))
-    patient["allergies"] = list(db.allergies.find({"PatientID": patient_id}, {"_id": 0}))
-    patient["reactions"] = list(db.adverse_reactions.find({"PatientID": patient_id}, {"_id": 0}))
-    return patient
+    if not patient:
+        return None
+
+    allergies = list(db.allergies.find({"PatientID": patient_id}, {"_id": 0}))
+    immunizations = list(db.immunizations.find({"PatientID": patient_id}, {"_id": 0}))
+    reactions = list(db.adverse_reactions.find({"PatientID": patient_id}, {"_id": 0}))
+
+    # Since datetime isn't directly serializable in basic Flask if we don't handle it
+    # We will let the frontend or Flask's JSON provider handle stringification
+    return {
+        "patient": patient,
+        "allergies": allergies,
+        "immunizations": immunizations,
+        "reactions": reactions
+    }
