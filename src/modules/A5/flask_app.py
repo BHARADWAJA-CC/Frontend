@@ -1,81 +1,95 @@
-from flask import Flask, jsonify, request
-import db_connection  # Imports the database pool logic
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from db_connection import get_db
+from db_procedures import *
 
 app = Flask(__name__)
+# [2026-03-25] Dipesh: Fixed CORS issues
+CORS(app) 
 
-@app.route('/')
-def home():
-    """Root endpoint to verify the API is running."""
-    return jsonify({
-        "status": "success",
-        "message": "Flask backend API initialized successfully"
-    })
+db = get_db()
 
-@app.route('/api/health')
-def health_check():
-    """Basic health check endpoint."""
-    return jsonify({
-        "status": "healthy"
-    })
+# ---------------- PATIENT (March 12) ----------------
+@app.route('/api/patients', methods=['GET'])
+def get_patients():
+    try:
+        return jsonify(list(db.patients.find({}, {"_id": 0})))
+    except:
+        return jsonify({"error": "Failed"}), 500
 
-# ================== PATIENT ENDPOINTS ==================
 
 @app.route('/api/patients', methods=['POST'])
 def add_patient():
-    """API endpoint to insert a new patient into MySQL Database."""
     data = request.json
-    
-    # Extract data from request payload
-    first_name = data.get('first_name')
-    last_name = data.get('last_name')
-    dob = data.get('date_of_birth')
-    gender = data.get('gender')
-    contact = data.get('contact_number')
-
-    # Data validation
-    if not all([first_name, last_name, dob, gender]):
-        return jsonify({"status": "error", "message": "Missing required fields"}), 400
-
-    # Fetch connection from the pool
-    conn = db_connection.get_db_connection()
-    if not conn:
-        return jsonify({"status": "error", "message": "Database connection failed"}), 500
+    if not data.get("Name"):
+        return jsonify({"error": "Name required"}), 400
 
     try:
-        cursor = conn.cursor()
-        # Secure parameterized query to avoid SQL Injection
-        query = """
-            INSERT INTO Patients (first_name, last_name, date_of_birth, gender, contact_number)
-            VALUES (%s, %s, %s, %s, %s)
-        """
-        cursor.execute(query, (first_name, last_name, dob, gender, contact))
-        
-        # Commit the transaction to disk
-        conn.commit()
-        
-        # Grab the auto-incremented primary key
-        patient_id = cursor.lastrowid
-        
-        return jsonify({
-            "status": "success", 
-            "message": "Patient added successfully", 
-            "patient_id": patient_id
-        }), 201
-
+        insert_patient(db, data)
+        return jsonify({"message": "Added", "PatientID": data.get("PatientID")})
     except Exception as e:
-        # Rollback in case of failure
-        if 'conn' in locals() and conn:
-            conn.rollback()
-        return jsonify({"status": "error", "message": str(e)}), 500
-        
-    finally:
-        # Safely close cursors and return connection back to pool map
-        if 'cursor' in locals() and cursor:
-            cursor.close()
-        if 'conn' in locals() and conn:
-            conn.close() 
+        return jsonify({"error": f"Database insertion failed: {str(e)}"}), 500
+
+
+# ---------------- VACCINE (March 16) ----------------
+@app.route('/api/vaccines', methods=['GET'])
+def get_vaccines():
+    return jsonify(list(db.vaccines.find({}, {"_id": 0})))
+
+
+@app.route('/api/vaccines', methods=['POST'])
+def add_vaccine():
+    try:
+        insert_vaccine(db, request.json)
+        return jsonify({"message": "Added", "VaccineID": request.json.get("VaccineID")})
+    except Exception as e:
+        return jsonify({"error": f"Database insertion failed: {str(e)}"}), 500
+
+
+# ---------------- ALLERGY (March 20) ----------------
+@app.route('/api/allergies', methods=['POST'])
+def add_allergy():
+    try:
+        insert_allergy(db, request.json)
+        return jsonify({"message": "Added"})
+    except Exception as e:
+        return jsonify({"error": f"Database insertion failed: {str(e)}"}), 500
+
+
+# ---------------- CONTRAINDICATION (March 20) ----------------
+@app.route('/api/contraindications', methods=['POST'])
+def add_contra():
+    try:
+        insert_contraindication(db, request.json)
+        return jsonify({"message": "Added", "ContraindicationID": request.json.get("ContraindicationID")})
+    except Exception as e:
+        return jsonify({"error": f"Database insertion failed: {str(e)}"}), 500
+
+
+# ⭐ CHECK
+@app.route('/api/check_contraindication', methods=['POST'])
+def check_contra():
+    data = request.json
+    result = check_contraindication(db, data["PatientID"], data["VaccineID"])
+    return jsonify(result)
+
+
+# ---------------- IMMUNIZATION (March 23) ----------------
+@app.route('/api/immunizations', methods=['POST'])
+def add_immunization():
+    data = request.json
+
+    try:
+        result = check_contraindication(db, data["PatientID"], data["VaccineID"])
+
+        if result["blocked"]:
+            return jsonify({"error": "Blocked", "details": result}), 400
+
+        insert_immunization(db, data)
+        return jsonify({"message": "Added"})
+    except Exception as e:
+        return jsonify({"error": f"Database insertion failed: {str(e)}"}), 500
 
 
 if __name__ == '__main__':
-    # Run the app in debug mode on port 5000
-    app.run(debug=True, port=5000)
+    app.run(port=5005, debug=True)
