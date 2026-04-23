@@ -3,7 +3,7 @@ import requests
 import pandas as pd
 from datetime import datetime
 
-BASE_URL = "http://127.0.0.1:5005/api"
+from config import BASE_URL
 
 
 @st.cache_data(ttl=30)

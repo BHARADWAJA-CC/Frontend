@@ -112,4 +112,8 @@ def get_dashboard(patient_id):
         return jsonify({"error": str(e)}), 400
 
 if __name__ == '__main__':
-    app.run(port=5005, debug=True)
+    import os
+    # Default to 5005 but allow overriding for deployment environments
+    port = int(os.environ.get("FLASK_PORT", 5005))
+    # Bind to 0.0.0.0 to ensure the server is accessible externally in containers
+    app.run(host="0.0.0.0", port=port, debug=False)
