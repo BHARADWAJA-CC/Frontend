@@ -1,5 +1,15 @@
-import streamlit as st
+import atexit
 import importlib
+import inspect
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import requests
+import streamlit as st
+from dotenv import load_dotenv
 
 st.set_page_config(
   page_title="MedTrackPro | Clinical Dashboard",
@@ -7,37 +17,78 @@ st.set_page_config(
   initial_sidebar_state="expanded"
 )
 
-import os
-import sys
-import subprocess
-import atexit
-import time
+# ─────────────────────────────────────────────
+# 1) GLOBAL CONFIG + ENVIRONMENT
+# ─────────────────────────────────────────────
+_MODULE_ROOT = Path(__file__).resolve().parent
+if str(_MODULE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MODULE_ROOT))
 
-@st.cache_resource
-def start_flask_backend():
-    print("Starting Flask API in the background (Streamlit Cloud Compatibility)...")
+load_dotenv(_MODULE_ROOT / ".env")
+load_dotenv()
+
+
+def _start_flask_backend():
     env = os.environ.copy()
-    env["FLASK_PORT"] = "8000"
-    
-    flask_process = subprocess.Popen(
-        [sys.executable, "flask_app.py"],
-        env=env
-    )
-    
-    def cleanup():
-        print("Stopping Flask process...")
-        flask_process.terminate()
-        try:
-            flask_process.wait(timeout=2)
-        except:
-            pass
-            
-    atexit.register(cleanup)
-    time.sleep(2) # Give Flask time to bind
-    return "http://127.0.0.1:8000"
+    env.setdefault("FLASK_PORT", "8000")
+    backend_url = f"http://127.0.0.1:{env['FLASK_PORT']}"
 
-# Inject the URL into the environment so config.py can pick it up
-os.environ["FLASK_URL"] = start_flask_backend()
+    flask_process = subprocess.Popen(
+        [sys.executable, str(_MODULE_ROOT / "flask_app.py")],
+        cwd=_MODULE_ROOT,
+        env=env,
+    )
+
+    def cleanup():
+        if flask_process.poll() is None:
+            flask_process.terminate()
+            try:
+                flask_process.wait(timeout=2)
+            except Exception:
+                pass
+
+    atexit.register(cleanup)
+    return flask_process, backend_url
+
+
+def _wait_for_backend(backend_url, timeout_seconds=8):
+    deadline = time.time() + timeout_seconds
+    health_url = f"{backend_url}/api/patients"
+    while time.time() < deadline:
+        try:
+            response = requests.get(health_url, timeout=1.5)
+            if response.status_code < 500:
+                return True, None
+        except requests.RequestException:
+            pass
+        time.sleep(0.4)
+    return False, f"Backend did not become healthy at {health_url}"
+
+
+def _init_backend_singleton():
+    # 2) SINGLETON BACKEND CONNECTION STATE
+    if "backend" not in st.session_state:
+        service = {
+            "process": None,
+            "url": None,
+            "connected": False,
+            "error": None,
+        }
+        try:
+            process, url = _start_flask_backend()
+            connected, error = _wait_for_backend(url)
+            service["process"] = process
+            service["url"] = url
+            service["connected"] = connected
+            service["error"] = error
+        except Exception as exc:
+            service["error"] = str(exc)
+        st.session_state["backend"] = service
+
+    backend = st.session_state["backend"]
+    if backend.get("url"):
+        os.environ["FLASK_URL"] = backend["url"]
+    return backend
 
 # ─────────────────────────────────────────────
 # GLOBAL STYLES + FONTAWESOME
@@ -152,6 +203,11 @@ def init_state():
           st.session_state[k] = v
 
 init_state()
+
+backend = _init_backend_singleton()
+if not backend.get("connected", False):
+  st.error(f"Backend Connection Failed: {backend.get('error', 'Unknown error')}")
+  st.stop()
 
 # ─────────────────────────────────────────────
 # HELPER: navigate without re-importing modules
@@ -273,11 +329,17 @@ MODULE_MAP = {
   "SQL Showcase":        ("QuickActions.sql_showcase",   None),
 }
 
-if page in MODULE_MAP:
-  mod_path, _ = MODULE_MAP[page]
-  mod = importlib.import_module(mod_path)
-  importlib.reload(mod)   # always re-execute so state is fresh
-  if hasattr(mod, "show"):
-      mod.show()
-else:
-  st.error(f"Page '{page}' not found.")
+mod_path, _ = MODULE_MAP.get(page, MODULE_MAP["Home"])
+try:
+    mod = importlib.import_module(mod_path)
+    importlib.reload(mod)   # always re-execute so state is fresh
+    if hasattr(mod, "show"):
+        # 3) Dependency injection (page receives backend context when supported)
+        show_sig = inspect.signature(mod.show)
+        if len(show_sig.parameters) > 0:
+            mod.show(backend)
+        else:
+            mod.show()
+except Exception as e:
+    # 5) Global error boundary
+    st.error(f"An unexpected error occurred on this page: {e}")
